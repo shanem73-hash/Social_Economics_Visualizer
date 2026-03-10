@@ -240,21 +240,14 @@ if size_code:
 
 df = df.rename(columns=rename_map)
 
-all_regions = sorted([r for r in df["Region"].dropna().unique()])
-with st.sidebar:
-    region_filter = st.multiselect("Region", options=all_regions, default=all_regions)
+all_countries = sorted(df["Country"].dropna().unique())
+default_focus = [c for c in ["China", "United States", "Japan", "Germany", "India"] if c in all_countries]
 
-df = df[df["Region"].isin(region_filter)]
-if df.empty:
-    st.warning("No data after region filter.")
-    st.stop()
-
-all_countries_after_region = sorted(df["Country"].dropna().unique())
 with st.sidebar:
     country_filter = st.multiselect(
-        "Country (optional, pick one or more)",
-        options=all_countries_after_region,
-        default=[],
+        "Countries to compare (choose one or more)",
+        options=all_countries,
+        default=default_focus,
     )
 
 if country_filter:
@@ -365,7 +358,7 @@ with export_col2:
         f"Y: {y_label}",
         f"Bubble size: {size_label}",
         f"Color: {color_by}",
-        f"Regions: {', '.join(region_filter)}",
+        f"Countries: {', '.join(country_filter) if country_filter else 'All'}",
         f"Snapshot year: {selected_year}",
         f"Rows in snapshot: {len(snapshot)}",
     ]
