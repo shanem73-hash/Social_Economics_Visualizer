@@ -3,6 +3,7 @@ import zipfile
 from datetime import datetime
 
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.io as pio
 import requests
@@ -259,28 +260,42 @@ if country_filter:
 required = [x_label, y_label]
 if size_code:
     required.append(size_label)
-plot_df = df.dropna(subset=required)
+
+plot_df = df.dropna(subset=required).copy()
+
+# Remove non-finite values to avoid Plotly axis glitches (e.g., NaN x 10^∞)
+finite_mask = np.isfinite(plot_df[x_label]) & np.isfinite(plot_df[y_label])
+if size_code:
+    finite_mask &= np.isfinite(plot_df[size_label])
+plot_df = plot_df[finite_mask]
+
+if log_x:
+    # log axis cannot render non-positive x values
+    plot_df = plot_df[plot_df[x_label] > 0]
 
 if plot_df.empty:
-    st.warning("No complete observations for selected indicators.")
+    st.warning("No valid finite observations for selected indicators/scale.")
     st.stop()
 
 # ---------- Main Gapminder-style bubble chart ----------
 # Global axis ranges so animated points don't disappear outside first-frame bounds
-x_series = plot_df[x_label].dropna()
-y_series = plot_df[y_label].dropna()
+x_series = plot_df[x_label].replace([np.inf, -np.inf], np.nan).dropna()
+y_series = plot_df[y_label].replace([np.inf, -np.inf], np.nan).dropna()
 
-x_min = float(x_series.min()) if not x_series.empty else 0.0
-x_max = float(x_series.max()) if not x_series.empty else 1.0
+x_min = float(x_series.min()) if not x_series.empty else 1.0
+x_max = float(x_series.max()) if not x_series.empty else 10.0
 y_min = float(y_series.min()) if not y_series.empty else 0.0
 y_max = float(y_series.max()) if not y_series.empty else 1.0
 
 if log_x:
     # log axis requires positive values
     x_min = max(x_min, 1e-6)
+    x_max = max(x_max, x_min * 1.01)
     range_x = [x_min * 0.9, x_max * 1.1]
 else:
-    x_pad = (x_max - x_min) * 0.05 if x_max > x_min else max(abs(x_max) * 0.05, 1.0)
+    if x_max <= x_min:
+        x_max = x_min + 1.0
+    x_pad = (x_max - x_min) * 0.05
     range_x = [x_min - x_pad, x_max + x_pad]
 
 y_pad = (y_max - y_min) * 0.05 if y_max > y_min else max(abs(y_max) * 0.05, 1.0)
