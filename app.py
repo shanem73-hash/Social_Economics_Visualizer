@@ -204,7 +204,7 @@ with st.sidebar:
     y_label = st.selectbox("Y axis", options=label_list, index=label_list.index(default_y_label))
     size_label = st.selectbox("Bubble size", options=["(none)"] + label_list, index=1 + label_list.index(default_size_label))
 
-    color_by = st.selectbox("Color by", options=["Region", "IncomeGroup", "LendingType"], index=0)
+    color_by = st.selectbox("Color by", options=["Country", "Region", "IncomeGroup", "LendingType"], index=0)
     log_x = st.checkbox("Log scale for X axis", value=True)
     show_trails = st.checkbox("Show country trails", value=False)
 
