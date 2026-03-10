@@ -266,6 +266,26 @@ if plot_df.empty:
     st.stop()
 
 # ---------- Main Gapminder-style bubble chart ----------
+# Global axis ranges so animated points don't disappear outside first-frame bounds
+x_series = plot_df[x_label].dropna()
+y_series = plot_df[y_label].dropna()
+
+x_min = float(x_series.min()) if not x_series.empty else 0.0
+x_max = float(x_series.max()) if not x_series.empty else 1.0
+y_min = float(y_series.min()) if not y_series.empty else 0.0
+y_max = float(y_series.max()) if not y_series.empty else 1.0
+
+if log_x:
+    # log axis requires positive values
+    x_min = max(x_min, 1e-6)
+    range_x = [x_min * 0.9, x_max * 1.1]
+else:
+    x_pad = (x_max - x_min) * 0.05 if x_max > x_min else max(abs(x_max) * 0.05, 1.0)
+    range_x = [x_min - x_pad, x_max + x_pad]
+
+y_pad = (y_max - y_min) * 0.05 if y_max > y_min else max(abs(y_max) * 0.05, 1.0)
+range_y = [y_min - y_pad, y_max + y_pad]
+
 scatter_kwargs = dict(
     data_frame=plot_df,
     x=x_label,
@@ -274,6 +294,8 @@ scatter_kwargs = dict(
     animation_group="Country",
     color=color_by,
     hover_name="Country",
+    range_x=range_x,
+    range_y=range_y,
     title="Gapminder-style Social & Economic Time Series",
 )
 
