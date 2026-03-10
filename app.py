@@ -314,19 +314,22 @@ scatter_kwargs = dict(
     title="Gapminder-style Social & Economic Time Series",
 )
 
+x_axis_range = None
+y_axis_range = None
 if np.isfinite(x_min) and np.isfinite(x_max) and np.isfinite(y_min) and np.isfinite(y_max):
     if log_x:
         x_min = max(x_min, 1e-6)
         x_max = max(x_max, x_min * 1.01)
-        scatter_kwargs["range_x"] = [x_min * 0.9, x_max * 1.1]
+        # Plotly log-axis explicit range uses log10 values
+        x_axis_range = [np.log10(x_min * 0.9), np.log10(x_max * 1.1)]
     else:
         if x_max <= x_min:
             x_max = x_min + 1.0
         x_pad = (x_max - x_min) * 0.05
-        scatter_kwargs["range_x"] = [x_min - x_pad, x_max + x_pad]
+        x_axis_range = [x_min - x_pad, x_max + x_pad]
 
     y_pad = (y_max - y_min) * 0.05 if y_max > y_min else max(abs(y_max) * 0.05, 1.0)
-    scatter_kwargs["range_y"] = [y_min - y_pad, y_max + y_pad]
+    y_axis_range = [y_min - y_pad, y_max + y_pad]
 
 if size_code:
     scatter_kwargs["size"] = size_label
@@ -335,10 +338,17 @@ if size_code:
 fig = px.scatter(**scatter_kwargs)
 fig.update_layout(template="plotly_white", height=720)
 if log_x:
-    fig.update_xaxes(type="log", autorange=False if "range_x" in scatter_kwargs else True)
+    fig.update_xaxes(type="log")
+
+if x_axis_range is not None:
+    fig.update_xaxes(range=x_axis_range, autorange=False)
 else:
-    fig.update_xaxes(autorange=False if "range_x" in scatter_kwargs else True)
-fig.update_yaxes(autorange=False if "range_y" in scatter_kwargs else True)
+    fig.update_xaxes(autorange=True)
+
+if y_axis_range is not None:
+    fig.update_yaxes(range=y_axis_range, autorange=False)
+else:
+    fig.update_yaxes(autorange=True)
 
 if show_trails:
     trails = px.line(
