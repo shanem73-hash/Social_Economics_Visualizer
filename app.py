@@ -209,6 +209,10 @@ with st.sidebar:
     log_x = st.checkbox("Log scale for X axis", value=True)
     show_trails = st.checkbox("Show country trails", value=False)
 
+    st.header("Main plot zoom")
+    zoom_mode = st.selectbox("Zoom mode", options=["Auto", "Manual"], index=0)
+    zoom_in = st.slider("Zoom level (Manual)", min_value=1.0, max_value=10.0, value=1.0, step=0.5)
+
 x_code = reverse_map[x_label]
 y_code = reverse_map[y_label]
 needed_codes = {x_code, y_code}
@@ -320,8 +324,9 @@ if np.isfinite(x_min) and np.isfinite(x_max) and np.isfinite(y_min) and np.isfin
     if log_x:
         x_min = max(x_min, 1e-6)
         x_max = max(x_max, x_min * 1.01)
-        # Plotly log-axis explicit range uses log10 values
-        x_axis_range = [np.log10(x_min * 0.9), np.log10(x_max * 1.1)]
+        x_low = np.log10(x_min * 0.9)
+        x_high = np.log10(x_max * 1.1)
+        x_axis_range = [x_low, x_high]
     else:
         if x_max <= x_min:
             x_max = x_min + 1.0
@@ -330,6 +335,15 @@ if np.isfinite(x_min) and np.isfinite(x_max) and np.isfinite(y_min) and np.isfin
 
     y_pad = (y_max - y_min) * 0.05 if y_max > y_min else max(abs(y_max) * 0.05, 1.0)
     y_axis_range = [y_min - y_pad, y_max + y_pad]
+
+# Manual zoom (center-preserving): >1 zooms in, 1 = auto full range
+if zoom_mode == "Manual" and zoom_in > 1.0 and x_axis_range is not None and y_axis_range is not None:
+    x_center = (x_axis_range[0] + x_axis_range[1]) / 2
+    y_center = (y_axis_range[0] + y_axis_range[1]) / 2
+    x_half = (x_axis_range[1] - x_axis_range[0]) / (2 * zoom_in)
+    y_half = (y_axis_range[1] - y_axis_range[0]) / (2 * zoom_in)
+    x_axis_range = [x_center - x_half, x_center + x_half]
+    y_axis_range = [y_center - y_half, y_center + y_half]
 
 if size_code:
     scatter_kwargs["size"] = size_label
@@ -340,15 +354,19 @@ fig.update_layout(template="plotly_white", height=720)
 if log_x:
     fig.update_xaxes(type="log")
 
-if x_axis_range is not None:
-    fig.update_xaxes(range=x_axis_range, autorange=False)
-else:
+if zoom_mode == "Auto":
     fig.update_xaxes(autorange=True)
-
-if y_axis_range is not None:
-    fig.update_yaxes(range=y_axis_range, autorange=False)
-else:
     fig.update_yaxes(autorange=True)
+else:
+    if x_axis_range is not None:
+        fig.update_xaxes(range=x_axis_range, autorange=False)
+    else:
+        fig.update_xaxes(autorange=True)
+
+    if y_axis_range is not None:
+        fig.update_yaxes(range=y_axis_range, autorange=False)
+    else:
+        fig.update_yaxes(autorange=True)
 
 if show_trails:
     trails = px.line(
