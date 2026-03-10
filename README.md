@@ -2,26 +2,31 @@
 
 A Streamlit app inspired by Gapminder, powered by **live World Bank API data**.
 
-## What it visualizes
+## Key features
 
-- Animated bubble chart over time
-- X-axis: selectable socioeconomic indicator
-- Y-axis: selectable socioeconomic indicator
-- Bubble size: selectable indicator (or none)
-- Color by: Region / Income Group / Lending Type
+### 1) Gapminder-style animated bubble chart
+- Time animation by year
+- X/Y indicator selection
+- Optional bubble size indicator
+- Color by Region / Income Group / Lending Type
+- Optional country trails
 
-## Included indicator families (broad set)
+### 2) Real World Bank live indicator data
+- Pulls from `https://api.worldbank.org/v2`
+- Includes a broad curated indicator set (GDP, PPP, health, education, labor, trade, inflation, debt, climate, etc.)
+- Optional **full World Bank indicator catalog mode** for dynamic indicator search/selection
 
-- GDP / GDP per capita (nominal, real, PPP)
-- Life expectancy, fertility, infant mortality
-- Population, urbanization, population density
-- Poverty / inequality (Gini)
-- Education / health spending
-- Unemployment / labor participation
-- Inflation, debt, trade, FDI
-- Internet usage, CO2, energy use
+### 3) Country compare mode
+- Pick multiple countries
+- Plot indicator trend lines over time (line chart)
 
-> You can easily add more WDI indicators by extending the `INDICATORS` dictionary in `app.py`.
+### 4) Export tools
+- Download snapshot CSV
+- Download summary PDF
+- One-click ZIP export with:
+  - CSV snapshot
+  - PDF summary
+  - PNG chart (fallback text note if PNG engine unavailable)
 
 ## Run locally
 
@@ -30,7 +35,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Data source
+## Notes
 
-- World Bank API: `https://api.worldbank.org/v2`
-- Country metadata + indicator time series fetched live and cached in Streamlit.
+- Indicator availability varies by country/year.
+- Full catalog mode is larger and can be slower on first load.

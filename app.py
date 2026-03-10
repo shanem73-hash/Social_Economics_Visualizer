@@ -1,16 +1,23 @@
-import requests
+import io
+import zipfile
+from datetime import datetime
+
 import pandas as pd
-import streamlit as st
 import plotly.express as px
+import plotly.io as pio
+import requests
+import streamlit as st
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 
 st.set_page_config(page_title="Social Economics Visualizer", layout="wide")
 
 st.title("🌍 Social Economics Visualizer (World Bank Live)")
-st.caption("Gapminder-style explorer powered by live World Bank indicators")
+st.caption("Gapminder-style explorer + country compare + export tools")
 
 BASE_URL = "https://api.worldbank.org/v2"
 
-# A broad starter set of socioeconomic indicators (expand anytime)
+# Curated indicators (fast defaults)
 INDICATORS = {
     "NY.GDP.PCAP.CD": "GDP per capita (current US$)",
     "NY.GDP.PCAP.PP.CD": "GDP per capita, PPP (current international $)",
@@ -52,7 +59,6 @@ def fetch_countries() -> pd.DataFrame:
     rows = data[1]
     out = []
     for r in rows:
-        # Skip aggregates like 'World', 'High income', etc.
         if r.get("region", {}).get("id") == "NA":
             continue
         out.append(
@@ -67,12 +73,41 @@ def fetch_countries() -> pd.DataFrame:
     return pd.DataFrame(out)
 
 
+@st.cache_data(ttl=7 * 24 * 3600)
+def fetch_indicator_catalog() -> pd.DataFrame:
+    page = 1
+    all_rows = []
+    while True:
+        url = f"{BASE_URL}/indicator?format=json&per_page=20000&page={page}"
+        payload = requests.get(url, timeout=60).json()
+        if not isinstance(payload, list) or len(payload) < 2 or not payload[1]:
+            break
+        meta = payload[0]
+        for item in payload[1]:
+            name = item.get("name", "")
+            code = item.get("id", "")
+            source = (item.get("source") or {}).get("value", "")
+            if code and name:
+                all_rows.append(
+                    {
+                        "code": code,
+                        "name": name,
+                        "source": source,
+                        "display": f"{name} [{code}]",
+                    }
+                )
+        if page >= int(meta.get("pages", 1)):
+            break
+        page += 1
+
+    return pd.DataFrame(all_rows).drop_duplicates(subset=["code"]) if all_rows else pd.DataFrame()
+
+
 @st.cache_data(ttl=6 * 3600)
 def fetch_indicator(indicator_code: str, start_year: int, end_year: int) -> pd.DataFrame:
-    per_page = 20000
     url = (
         f"{BASE_URL}/country/all/indicator/{indicator_code}"
-        f"?format=json&date={start_year}:{end_year}&per_page={per_page}"
+        f"?format=json&date={start_year}:{end_year}&per_page=20000"
     )
     payload = requests.get(url, timeout=60).json()
 
@@ -87,11 +122,9 @@ def fetch_indicator(indicator_code: str, start_year: int, end_year: int) -> pd.D
         if not iso3 or val is None:
             continue
         try:
-            year = int(year)
-            val = float(val)
+            rows.append({"countryiso3code": iso3, "Year": int(year), indicator_code: float(val)})
         except Exception:
             continue
-        rows.append({"countryiso3code": iso3, "Year": year, indicator_code: val})
 
     return pd.DataFrame(rows)
 
@@ -103,10 +136,7 @@ def build_dataset(indicator_codes: tuple, start_year: int, end_year: int) -> pd.
     merged = None
     for code in indicator_codes:
         dfi = fetch_indicator(code, start_year, end_year)
-        if merged is None:
-            merged = dfi
-        else:
-            merged = merged.merge(dfi, on=["countryiso3code", "Year"], how="outer")
+        merged = dfi if merged is None else merged.merge(dfi, on=["countryiso3code", "Year"], how="outer")
 
     if merged is None:
         return pd.DataFrame()
@@ -114,14 +144,31 @@ def build_dataset(indicator_codes: tuple, start_year: int, end_year: int) -> pd.
     merged = merged.merge(countries, on="countryiso3code", how="left")
     merged = merged.dropna(subset=["Country", "Year"])
     merged["Year"] = merged["Year"].astype(int)
-
-    # User-friendly labels
-    rename_map = {k: v for k, v in INDICATORS.items()}
-    merged = merged.rename(columns=rename_map)
-
     return merged
 
 
+def make_pdf_summary(title: str, lines: list[str]) -> bytes:
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    w, h = letter
+    y = h - 50
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(40, y, title)
+    y -= 25
+    c.setFont("Helvetica", 10)
+    for line in lines:
+        if y < 40:
+            c.showPage()
+            c.setFont("Helvetica", 10)
+            y = h - 40
+        c.drawString(40, y, line[:120])
+        y -= 15
+    c.save()
+    buffer.seek(0)
+    return buffer.read()
+
+
+# ---------- UI ----------
 with st.sidebar:
     st.header("Data settings")
     year_min = st.number_input("Start year", min_value=1960, max_value=2025, value=1990, step=1)
@@ -130,61 +177,88 @@ with st.sidebar:
         st.error("Start year must be <= End year")
         st.stop()
 
-    st.header("Axes")
+    use_catalog = st.checkbox("Use full World Bank indicator catalog", value=False)
+
+# indicator label maps
+if use_catalog:
+    catalog = fetch_indicator_catalog()
+    if catalog.empty:
+        st.error("Could not load World Bank indicator catalog.")
+        st.stop()
+    label_list = catalog["display"].tolist()
+    reverse_map = {row.display: row.code for row in catalog.itertuples(index=False)}
+
+    default_x_label = next((d for d in label_list if DEFAULT_X in d), label_list[0])
+    default_y_label = next((d for d in label_list if DEFAULT_Y in d), label_list[min(1, len(label_list)-1)])
+    default_size_label = next((d for d in label_list if DEFAULT_SIZE in d), label_list[min(2, len(label_list)-1)])
+else:
     label_list = list(INDICATORS.values())
     reverse_map = {v: k for k, v in INDICATORS.items()}
+    default_x_label = INDICATORS[DEFAULT_X]
+    default_y_label = INDICATORS[DEFAULT_Y]
+    default_size_label = INDICATORS[DEFAULT_SIZE]
 
-    x_label = st.selectbox(
-        "X axis",
-        options=label_list,
-        index=label_list.index(INDICATORS[DEFAULT_X]),
-    )
-    y_label = st.selectbox(
-        "Y axis",
-        options=label_list,
-        index=label_list.index(INDICATORS[DEFAULT_Y]),
-    )
-    size_label = st.selectbox(
-        "Bubble size",
-        options=["(none)"] + label_list,
-        index=1 + label_list.index(INDICATORS[DEFAULT_SIZE]),
-    )
+with st.sidebar:
+    st.header("Axes")
+    x_label = st.selectbox("X axis", options=label_list, index=label_list.index(default_x_label))
+    y_label = st.selectbox("Y axis", options=label_list, index=label_list.index(default_y_label))
+    size_label = st.selectbox("Bubble size", options=["(none)"] + label_list, index=1 + label_list.index(default_size_label))
 
     color_by = st.selectbox("Color by", options=["Region", "IncomeGroup", "LendingType"], index=0)
     log_x = st.checkbox("Log scale for X axis", value=True)
     show_trails = st.checkbox("Show country trails", value=False)
 
-needed_codes = {reverse_map[x_label], reverse_map[y_label]}
+x_code = reverse_map[x_label]
+y_code = reverse_map[y_label]
+needed_codes = {x_code, y_code}
+size_code = None
 if size_label != "(none)":
-    needed_codes.add(reverse_map[size_label])
+    size_code = reverse_map[size_label]
+    needed_codes.add(size_code)
+
+# compare mode indicator
+with st.sidebar:
+    st.header("Compare mode")
+    compare_mode = st.checkbox("Enable country compare lines", value=True)
+    compare_label = st.selectbox("Compare indicator", options=label_list, index=label_list.index(y_label))
+compare_code = reverse_map[compare_label]
+needed_codes.add(compare_code)
 
 df = build_dataset(tuple(sorted(needed_codes)), int(year_min), int(year_max))
-
 if df.empty:
     st.error("No data returned from World Bank API for current settings.")
     st.stop()
 
-# Region options after data load
+# Pretty names for selected indicators
+rename_map = {
+    x_code: x_label,
+    y_code: y_label,
+    compare_code: compare_label,
+}
+if size_code:
+    rename_map[size_code] = size_label
+
+df = df.rename(columns=rename_map)
+
 all_regions = sorted([r for r in df["Region"].dropna().unique()])
 with st.sidebar:
     region_filter = st.multiselect("Region", options=all_regions, default=all_regions)
 
 df = df[df["Region"].isin(region_filter)]
-
 if df.empty:
-    st.warning("No data after filters.")
+    st.warning("No data after region filter.")
     st.stop()
 
-# Keep rows with required axes
 required = [x_label, y_label]
-if size_label != "(none)":
+if size_code:
     required.append(size_label)
 plot_df = df.dropna(subset=required)
 
 if plot_df.empty:
-    st.warning("No complete observations for selected indicators and years.")
+    st.warning("No complete observations for selected indicators.")
     st.stop()
 
+# ---------- Main Gapminder-style bubble chart ----------
 scatter_kwargs = dict(
     data_frame=plot_df,
     x=x_label,
@@ -193,11 +267,10 @@ scatter_kwargs = dict(
     animation_group="Country",
     color=color_by,
     hover_name="Country",
-    hover_data={"countryiso3code": True, "Year": True, x_label: ':.2f', y_label: ':.2f'},
     title="Gapminder-style Social & Economic Time Series",
 )
 
-if size_label != "(none)":
+if size_code:
     scatter_kwargs["size"] = size_label
     scatter_kwargs["size_max"] = 55
 
@@ -220,16 +293,94 @@ if show_trails:
 
 st.plotly_chart(fig, use_container_width=True)
 
+# ---------- Compare mode ----------
+if compare_mode:
+    st.subheader("Country Compare Mode")
+    countries = sorted(plot_df["Country"].dropna().unique())
+    default_compare = [c for c in ["China", "United States", "Japan", "Germany", "India"] if c in countries]
+    selected_countries = st.multiselect(
+        "Select countries to compare",
+        options=countries,
+        default=default_compare[:5],
+    )
+
+    comp_df = df[df["Country"].isin(selected_countries)].dropna(subset=[compare_label])
+    if not comp_df.empty and selected_countries:
+        comp_fig = px.line(
+            comp_df.sort_values(["Country", "Year"]),
+            x="Year",
+            y=compare_label,
+            color="Country",
+            markers=True,
+            title=f"Compare over time: {compare_label}",
+        )
+        comp_fig.update_layout(template="plotly_white", height=480)
+        st.plotly_chart(comp_fig, use_container_width=True)
+    else:
+        st.info("Select countries with available data to compare.")
+
+# ---------- Snapshot ----------
 st.subheader("Data snapshot")
 year_options = sorted(plot_df["Year"].unique())
 selected_year = st.selectbox("Select year", options=year_options, index=len(year_options) - 1)
-view_cols = ["Country", "Region", "IncomeGroup", x_label, y_label]
-if size_label != "(none)":
-    view_cols.append(size_label)
 
+view_cols = ["Country", "Region", "IncomeGroup", x_label, y_label]
+if size_code:
+    view_cols.append(size_label)
 snapshot = plot_df[plot_df["Year"] == selected_year][view_cols].sort_values(x_label, ascending=False)
 st.dataframe(snapshot, use_container_width=True)
 
-st.caption(
-    "Data source: World Bank API (live). Indicator list is intentionally broad and can be extended with more WDI codes."
-)
+# ---------- Export ----------
+st.subheader("Export")
+export_col1, export_col2, export_col3 = st.columns(3)
+
+with export_col1:
+    csv_bytes = snapshot.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download snapshot CSV",
+        data=csv_bytes,
+        file_name=f"snapshot_{selected_year}.csv",
+        mime="text/csv",
+    )
+
+with export_col2:
+    pdf_lines = [
+        f"Generated: {datetime.utcnow().isoformat()} UTC",
+        f"Year range: {year_min}-{year_max}",
+        f"X: {x_label}",
+        f"Y: {y_label}",
+        f"Bubble size: {size_label}",
+        f"Color: {color_by}",
+        f"Regions: {', '.join(region_filter)}",
+        f"Snapshot year: {selected_year}",
+        f"Rows in snapshot: {len(snapshot)}",
+    ]
+    pdf_bytes = make_pdf_summary("Social Economics Visualizer - Summary", pdf_lines)
+    st.download_button(
+        "Download summary PDF",
+        data=pdf_bytes,
+        file_name="summary_report.pdf",
+        mime="application/pdf",
+    )
+
+with export_col3:
+    # One-click ZIP (CSV + PDF + optional PNG)
+    zbuf = io.BytesIO()
+    with zipfile.ZipFile(zbuf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"snapshot_{selected_year}.csv", csv_bytes)
+        zf.writestr("summary_report.pdf", pdf_bytes)
+        try:
+            png = pio.to_image(fig, format="png", width=1400, height=900, scale=2)
+            zf.writestr("main_chart.png", png)
+        except Exception:
+            zf.writestr("main_chart.txt", "PNG export unavailable (install kaleido).")
+
+    zbuf.seek(0)
+    st.download_button(
+        "One-click export ZIP",
+        data=zbuf.getvalue(),
+        file_name="social_economics_export.zip",
+        mime="application/zip",
+    )
+
+st.caption("Data source: World Bank API live data. Tip: enable full catalog to search/select from the full indicator universe.")
