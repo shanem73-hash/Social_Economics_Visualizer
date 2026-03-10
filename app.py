@@ -249,6 +249,20 @@ if df.empty:
     st.warning("No data after region filter.")
     st.stop()
 
+all_countries_after_region = sorted(df["Country"].dropna().unique())
+with st.sidebar:
+    country_filter = st.multiselect(
+        "Country (optional, pick one or more)",
+        options=all_countries_after_region,
+        default=[],
+    )
+
+if country_filter:
+    df = df[df["Country"].isin(country_filter)]
+    if df.empty:
+        st.warning("No data after country filter.")
+        st.stop()
+
 required = [x_label, y_label]
 if size_code:
     required.append(size_label)
