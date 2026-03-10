@@ -258,11 +258,19 @@ if country_filter:
         st.stop()
 
 # Build plot data in two stages so size-indicator sparsity doesn't wipe chart
-plot_df = df.dropna(subset=[x_label, y_label]).copy()
+plot_df = df.copy()
+
+# Force numeric types for selected indicators
+plot_df[x_label] = pd.to_numeric(plot_df[x_label], errors="coerce")
+plot_df[y_label] = pd.to_numeric(plot_df[y_label], errors="coerce")
+if size_code:
+    plot_df[size_label] = pd.to_numeric(plot_df[size_label], errors="coerce")
+
+plot_df = plot_df.dropna(subset=[x_label, y_label]).copy()
 
 # Remove non-finite X/Y values first
-xy_finite = np.isfinite(plot_df[x_label]) & np.isfinite(plot_df[y_label])
-plot_df = plot_df[xy_finite]
+xy_finite = np.isfinite(plot_df[x_label].to_numpy()) & np.isfinite(plot_df[y_label].to_numpy())
+plot_df = plot_df.loc[xy_finite]
 
 if log_x:
     # log axis cannot render non-positive x values
@@ -290,24 +298,10 @@ st.caption(f"Rows used for chart: {len(plot_df):,} | Countries: {plot_df['Countr
 x_series = plot_df[x_label].replace([np.inf, -np.inf], np.nan).dropna()
 y_series = plot_df[y_label].replace([np.inf, -np.inf], np.nan).dropna()
 
-x_min = float(x_series.min()) if not x_series.empty else 1.0
-x_max = float(x_series.max()) if not x_series.empty else 10.0
-y_min = float(y_series.min()) if not y_series.empty else 0.0
-y_max = float(y_series.max()) if not y_series.empty else 1.0
-
-if log_x:
-    # log axis requires positive values
-    x_min = max(x_min, 1e-6)
-    x_max = max(x_max, x_min * 1.01)
-    range_x = [x_min * 0.9, x_max * 1.1]
-else:
-    if x_max <= x_min:
-        x_max = x_min + 1.0
-    x_pad = (x_max - x_min) * 0.05
-    range_x = [x_min - x_pad, x_max + x_pad]
-
-y_pad = (y_max - y_min) * 0.05 if y_max > y_min else max(abs(y_max) * 0.05, 1.0)
-range_y = [y_min - y_pad, y_max + y_pad]
+x_min = float(x_series.min()) if not x_series.empty else np.nan
+x_max = float(x_series.max()) if not x_series.empty else np.nan
+y_min = float(y_series.min()) if not y_series.empty else np.nan
+y_max = float(y_series.max()) if not y_series.empty else np.nan
 
 scatter_kwargs = dict(
     data_frame=plot_df,
@@ -317,10 +311,22 @@ scatter_kwargs = dict(
     animation_group="Country",
     color=color_by,
     hover_name="Country",
-    range_x=range_x,
-    range_y=range_y,
     title="Gapminder-style Social & Economic Time Series",
 )
+
+if np.isfinite(x_min) and np.isfinite(x_max) and np.isfinite(y_min) and np.isfinite(y_max):
+    if log_x:
+        x_min = max(x_min, 1e-6)
+        x_max = max(x_max, x_min * 1.01)
+        scatter_kwargs["range_x"] = [x_min * 0.9, x_max * 1.1]
+    else:
+        if x_max <= x_min:
+            x_max = x_min + 1.0
+        x_pad = (x_max - x_min) * 0.05
+        scatter_kwargs["range_x"] = [x_min - x_pad, x_max + x_pad]
+
+    y_pad = (y_max - y_min) * 0.05 if y_max > y_min else max(abs(y_max) * 0.05, 1.0)
+    scatter_kwargs["range_y"] = [y_min - y_pad, y_max + y_pad]
 
 if size_code:
     scatter_kwargs["size"] = size_label
@@ -329,7 +335,10 @@ if size_code:
 fig = px.scatter(**scatter_kwargs)
 fig.update_layout(template="plotly_white", height=720)
 if log_x:
-    fig.update_xaxes(type="log")
+    fig.update_xaxes(type="log", autorange=False if "range_x" in scatter_kwargs else True)
+else:
+    fig.update_xaxes(autorange=False if "range_x" in scatter_kwargs else True)
+fig.update_yaxes(autorange=False if "range_y" in scatter_kwargs else True)
 
 if show_trails:
     trails = px.line(
