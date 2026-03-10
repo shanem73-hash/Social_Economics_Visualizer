@@ -257,25 +257,33 @@ if country_filter:
         st.warning("No data after country filter.")
         st.stop()
 
-required = [x_label, y_label]
-if size_code:
-    required.append(size_label)
+# Build plot data in two stages so size-indicator sparsity doesn't wipe chart
+plot_df = df.dropna(subset=[x_label, y_label]).copy()
 
-plot_df = df.dropna(subset=required).copy()
-
-# Remove non-finite values to avoid Plotly axis glitches (e.g., NaN x 10^∞)
-finite_mask = np.isfinite(plot_df[x_label]) & np.isfinite(plot_df[y_label])
-if size_code:
-    finite_mask &= np.isfinite(plot_df[size_label])
-plot_df = plot_df[finite_mask]
+# Remove non-finite X/Y values first
+xy_finite = np.isfinite(plot_df[x_label]) & np.isfinite(plot_df[y_label])
+plot_df = plot_df[xy_finite]
 
 if log_x:
     # log axis cannot render non-positive x values
     plot_df = plot_df[plot_df[x_label] > 0]
 
 if plot_df.empty:
-    st.warning("No valid finite observations for selected indicators/scale.")
+    st.warning("No valid data for selected X/Y indicators under current filters.")
     st.stop()
+
+# Apply bubble-size filter only if selected; fallback gracefully if sparse
+if size_code:
+    sized_df = plot_df.dropna(subset=[size_label]).copy()
+    sized_df = sized_df[np.isfinite(sized_df[size_label])]
+    if not sized_df.empty:
+        plot_df = sized_df
+    else:
+        st.info(f"Selected bubble size indicator '{size_label}' has no usable values for current filters. Switched bubble size to none.")
+        size_code = None
+        size_label = "(none)"
+
+st.caption(f"Rows used for chart: {len(plot_df):,} | Countries: {plot_df['Country'].nunique()} | Years: {plot_df['Year'].nunique()}")
 
 # ---------- Main Gapminder-style bubble chart ----------
 # Global axis ranges so animated points don't disappear outside first-frame bounds
